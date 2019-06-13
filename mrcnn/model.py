@@ -167,8 +167,72 @@ def conv_block(input_tensor, kernel_size, filters, stage, block,
     x = KL.Activation('relu', name='res' + str(stage) + block + '_out')(x)
     return x
 
-
 def resnet_graph(input_image, architecture, stage5=False, train_bn=True):
+    assert architecture in ["resnet50", "resnet101"]
+    x = KL.ZeroPadding2D(padding=((3, 3), (3, 3)), name='conv1_pad')(input_image)
+    x = KL.Conv2D(64, 7, strides=2, use_bias=True, name='conv1_conv')(x)
+    x = KL.BatchNormalization(name='conv1_bn')(x, training=train_bn)
+    x = KL.Activation('relu', name='conv1_relu')(x)
+    x = KL.ZeroPadding2D(padding=((1, 1), (1, 1)), name='pool1_pad')(x)
+    C1 = x = KL.MaxPooling2D(3, strides=2, name='pool1_pool')(x)
+    C2 = x = resent_stack(x,64,3,stride1=1, name='conv2')
+    C3 = x = resent_stack(x, 128, 4, name='conv3')
+    block_count = {"resnet50": 6, "resnet101": 23}[architecture]
+    C4 = x = resent_stack(x, 256, 23, name='conv4')
+    if stage5:
+        C5 = x = resent_stack(x, 512, 3, name='conv5')
+    else:
+        C5= None
+    return [C1, C2, C3, C4, C5]
+
+def resent_stack(x, filters, blocks, stride1=2, name=None, train_bn=True):
+    x = resnet_block(x, filters, stride=stride1, name=name + '_block1', train_bn = train_bn)
+    for i in range(2, blocks + 1):
+        x = resnet_block(x, filters, conv_shortcut=False, name=name + '_block' + str(i), train_bn = train_bn)
+    return x
+
+
+def resnet_block(x, filters, kernel_size=3, stride=1,
+           conv_shortcut=True, name=None, train_bn=True):
+    """A residual block.
+    # Arguments
+        x: input tensor.
+        filters: integer, filters of the bottleneck layer.
+        kernel_size: default 3, kernel size of the bottleneck layer.
+        stride: default 1, stride of the first layer.
+        conv_shortcut: default True, use convolution shortcut if True,
+            otherwise identity shortcut.
+        name: string, block label.
+    # Returns
+        Output tensor for the residual block.
+    """
+    bn_axis = 3 if K.image_data_format() == 'channels_last' else 1
+
+    if conv_shortcut is True:
+        shortcut = KL.Conv2D(4 * filters, 1, strides=stride,
+                                 name=name + '_0_conv')(x)
+        shortcut = KL.BatchNormalization(name=name + '_0_bn')(shortcut, training=train_bn)
+    else:
+        shortcut = x
+
+    x = KL.Conv2D(filters, 1, strides=stride, name=name + '_1_conv')(x)
+    x = KL.BatchNormalization(name=name + '_1_bn')(x, training = train_bn)
+    x = KL.Activation('relu', name=name + '_1_relu')(x)
+
+    x = KL.Conv2D(filters, kernel_size, padding='SAME',
+                      name=name + '_2_conv')(x)
+    x = KL.BatchNormalization(name=name + '_2_bn')(x, training = train_bn)
+    x = KL.Activation('relu', name=name + '_2_relu')(x)
+
+    x = KL.Conv2D(4 * filters, 1, name=name + '_3_conv')(x)
+    x = KL.BatchNormalization(name=name + '_3_bn')(x, training = train_bn)
+
+    x = KL.Add(name=name + '_add')([shortcut, x])
+    x = KL.Activation('relu', name=name + '_out')(x)
+    return x
+
+
+def resnet_graph_orig(input_image, architecture, stage5=False, train_bn=True):
     """Build a ResNet graph.
         architecture: Can be resnet50 or resnet101
         stage5: Boolean. If False, stage5 of the network is not created
@@ -2314,9 +2378,9 @@ class MaskRCNN():
             # all layers but the backbone
             "heads": r"(mrcnn\_.*)|(rpn\_.*)|(fpn\_.*)",
             # From a specific Resnet stage and up
-            "3+": r"(res3.*)|(bn3.*)|(res4.*)|(bn4.*)|(res5.*)|(bn5.*)|(mrcnn\_.*)|(rpn\_.*)|(fpn\_.*)",
-            "4+": r"(res4.*)|(bn4.*)|(res5.*)|(bn5.*)|(mrcnn\_.*)|(rpn\_.*)|(fpn\_.*)",
-            "5+": r"(res5.*)|(bn5.*)|(mrcnn\_.*)|(rpn\_.*)|(fpn\_.*)",
+            "3+": r"(conv3.*)|(conv4.*)|(conv5.*)|(mrcnn\_.*)|(rpn\_.*)|(fpn\_.*)",
+            "4+": r"(conv4.*)|(conv5.*)|(mrcnn\_.*)|(rpn\_.*)|(fpn\_.*)",
+            "5+": r"(conv5.*)|(mrcnn\_.*)|(rpn\_.*)|(fpn\_.*)",
             # All layers
             "all": ".*",
         }
